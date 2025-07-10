@@ -6,6 +6,25 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const cors = require('cors');
 const PDFDocument = require('pdfkit');
 const sizeOf = require('image-size');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+
+cloudinary.config({
+  cloud_name: 'dfp18npb1',
+  api_key: '381916922338158',
+  api_secret: '2Qw6QwQwQwQwQwQwQwQwQwQwQwQwQwQw' // Replace with your actual API secret
+});
+
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'lottery_uploads', // This is the folder name in Cloudinary
+    allowed_formats: ['jpg', 'png', 'pdf'],
+    resource_type: 'auto'
+  }
+});
+
+const upload = multer({ storage: storage });
 
 const app = express();
 const PORT = 4000;
@@ -13,29 +32,11 @@ const PORT = 4000;
 app.use(cors());
 app.use(express.json());
 
-// Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir);
-}
-
 // Ensure submissions directory exists
 const submissionsDir = path.join(__dirname, 'submissions');
 if (!fs.existsSync(submissionsDir)) {
   fs.mkdirSync(submissionsDir);
 }
-
-// Multer setup for file uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadsDir);
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + '-' + file.originalname);
-  }
-});
-const upload = multer({ storage: storage });
 
 // CSV Writer setup
 const csvPath = path.join(__dirname, 'submissions.csv');
@@ -59,9 +60,23 @@ app.post('/submit', upload.fields([
   { name: 'driverLicense', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    const data = req.body;
-    const files = req.files;
+    console.log('BODY:', req.body);
+    console.log('FILES:', req.files);
+
+    // Check if files are present
+    if (!req.files || (!req.files.passport && !req.files.driverLicense)) {
+      console.error('No files uploaded!');
+      return res.status(400).json({ error: 'No files uploaded!' });
+    }
+
+    // Get Cloudinary URLs
+    const passportUrl = req.files.passport ? req.files.passport[0].path : '';
+    const driverLicenseUrl = req.files.driverLicense ? req.files.driverLicense[0].path : '';
+    console.log('Cloudinary passport URL:', passportUrl);
+    console.log('Cloudinary driver license URL:', driverLicenseUrl);
+
     // Generate unique PDF filename
+    const data = req.body;
     const pdfFilename = `${Date.now()}-${data.fullName.replace(/\s+/g, '_')}.pdf`;
     const pdfPath = path.join(submissionsDir, pdfFilename);
     const doc = new PDFDocument();
@@ -79,18 +94,17 @@ app.post('/submit', upload.fields([
     doc.text(`Date of Birth: ${data.dateOfBirth}`);
     doc.moveDown();
 
-    // Add images if present
-    const addFileLinkToPDF = (file, label, req) => {
-      if (file) {
-        const fileUrl = req.protocol + '://' + req.get('host') + '/uploads/' + file.filename;
+    // Add Cloudinary links to PDF
+    const addFileLinkToPDF = (url, label) => {
+      if (url) {
         doc.text(`${label}: `, { continued: true });
-        doc.fillColor('blue').text(file.originalname, { link: fileUrl, underline: true });
+        doc.fillColor('blue').text(url, { link: url, underline: true });
         doc.fillColor('black');
         doc.moveDown();
       }
     };
-    addFileLinkToPDF(files.passport ? files.passport[0] : null, 'Passport/ID', req);
-    addFileLinkToPDF(files.driverLicense ? files.driverLicense[0] : null, "Driver's License", req);
+    addFileLinkToPDF(passportUrl, 'Passport/ID');
+    addFileLinkToPDF(driverLicenseUrl, "Driver's License");
 
     doc.end();
     writeStream.on('finish', () => {
@@ -101,15 +115,22 @@ app.post('/submit', upload.fields([
       res.status(500).json({ error: 'Failed to save PDF.' });
     });
   } catch (err) {
-    console.error(err);
+    console.error('Error in /submit:', err);
     res.status(500).json({ error: 'Failed to save submission.' });
   }
 });
 
-// Serve uploaded images for viewing
-app.use('/uploads', express.static(uploadsDir));
 // Serve submissions directory for PDF download
 app.use('/submissions', express.static(submissionsDir));
+
+app.get('/list-submissions', (req, res) => {
+  fs.readdir(submissionsDir, (err, files) => {
+    if (err) {
+      return res.status(500).json({ error: 'Unable to list files' });
+    }
+    res.json(files);
+  });
+});
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
