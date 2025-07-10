@@ -109,7 +109,7 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ onClose }) => {
     if (files.driverLicense) form.append('driverLicense', files.driverLicense);
 
     try {
-      const response = await fetch('http://localhost:4000/submit', {
+      const response = await fetch('https://lotto-dekf.onrender.com/submit', {
         method: 'POST',
         body: form
       });
